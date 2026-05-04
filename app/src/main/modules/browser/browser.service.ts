@@ -13,6 +13,13 @@ export interface TabState {
   favicon?: string
 }
 
+interface BrowserContentBounds {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
 class BrowserService {
   private views: Map<string, BrowserView> = new Map()
   private tabStates: Map<string, TabState> = new Map()
@@ -21,6 +28,7 @@ class BrowserService {
   private tabCounter = 0
   private activeSecondsTrackers: Map<string, NodeJS.Timeout> = new Map()
   private isVisible = true
+  private contentBounds: BrowserContentBounds | null = null
 
   init(mainWindow: BrowserWindow) {
     this.mainWindow = mainWindow
@@ -271,6 +279,11 @@ class BrowserService {
     this.updateViewBounds(activeView)
   }
 
+  setContentBounds(bounds: BrowserContentBounds): void {
+    this.contentBounds = bounds
+    this.updateViewBounds()
+  }
+
   // ─── Whitelist Logic ───
 
   isWhitelisted(url: string): boolean {
@@ -390,28 +403,23 @@ class BrowserService {
     const targetView = view || (this.activeTabId ? this.views.get(this.activeTabId) : null)
     if (!targetView || !this.isVisible) return
 
-    const bounds = this.mainWindow.getBounds()
-    const sidebarWidth = 64
-    const titlebarHeight = 32
-    const topbarHeight = 48
-    const canvasPaddingTop = 32
-    const browserTabBarHeight = 40
-    const browserAddressBarHeight = 44
-    const browserShellTopAdjust = -16
-    const browserShellBottomInset = 48
-    const viewTopOffset =
-      titlebarHeight +
-      topbarHeight +
-      canvasPaddingTop +
-      browserTabBarHeight +
-      browserAddressBarHeight +
-      browserShellTopAdjust
+    if (this.contentBounds) {
+      targetView.setBounds({
+        x: this.contentBounds.x,
+        y: this.contentBounds.y,
+        width: Math.max(0, this.contentBounds.width),
+        height: Math.max(0, this.contentBounds.height),
+      })
+      return
+    }
 
+    // Fallback in case renderer has not sent measured bounds yet.
+    const bounds = this.mainWindow.getBounds()
     targetView.setBounds({
-      x: sidebarWidth,
-      y: viewTopOffset,
-      width: bounds.width - sidebarWidth,
-      height: Math.max(0, bounds.height - viewTopOffset - browserShellBottomInset),
+      x: 64,
+      y: 148,
+      width: Math.max(0, bounds.width - 64),
+      height: Math.max(0, bounds.height - 148),
     })
   }
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { ZoomIn, ZoomOut, ChevronLeft, ChevronRight, Moon, Sun, BookOpen, Bookmark, MessageSquare, X, FolderOpen, Maximize2, Minimize2 } from 'lucide-react'
 
-// We'll use PDF.js from CDN for rendering
 declare const pdfjsLib: any
 
 function PdfViewer(): React.ReactElement {
@@ -18,36 +17,55 @@ function PdfViewer(): React.ReactElement {
   const [noteText, setNoteText] = useState('')
   const [showNoteInput, setShowNoteInput] = useState(false)
   const [isFullscreen, setIsFullscreen] = useState(false)
-  const canvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const pageCanvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
+  const pendingScrollPageRef = useRef<number>(1)
+
+  const scrollToPage = useCallback((pageNum: number, smooth = true) => {
+    const container = containerRef.current
+    if (!container) return
+
+    const target = container.querySelector<HTMLElement>(`[data-page=\"${pageNum}\"]`)
+    if (!target) return
+
+    const top = target.offsetTop - 12
+    container.scrollTo({ top, behavior: smooth ? 'smooth' : 'auto' })
+  }, [])
+
+  const goToPage = useCallback((pageNum: number) => {
+    const clamped = Math.min(Math.max(1, pageNum), totalPages || 1)
+    setCurrentPage(clamped)
+    scrollToPage(clamped)
+  }, [scrollToPage, totalPages])
 
   const openFile = async () => {
     const path = await window.electronAPI?.pdf.openDialog()
-    if (path) {
-      const result = await window.electronAPI?.pdf.open({ filePath: path })
-      if (result) {
-        setFilePath(result.filePath)
-        setFileHash(result.hash)
-        setFileName(result.fileName)
-        if (result.savedState) {
-          setCurrentPage(result.savedState.last_page || 1)
-          setZoom(result.savedState.zoom_level || 100)
-          setSidebarOpen(result.savedState.sidebar_open !== false)
-        }
-        loadPdf(result.filePath)
-        loadAnnotations(result.hash)
-      }
-    }
+    if (!path) return
+
+    const result = await window.electronAPI?.pdf.open({ filePath: path })
+    if (!result) return
+
+    setFilePath(result.filePath)
+    setFileHash(result.hash)
+    setFileName(result.fileName)
+
+    const savedPage = result.savedState?.last_page || 1
+    pendingScrollPageRef.current = savedPage
+    setCurrentPage(savedPage)
+    setZoom(result.savedState?.zoom_level || 100)
+    setSidebarOpen(result.savedState?.sidebar_open !== false)
+
+    loadPdf(result.filePath)
+    loadAnnotations(result.hash)
   }
 
   const loadPdf = async (path: string) => {
     try {
-      // Load PDF.js if not already loaded
       if (typeof pdfjsLib === 'undefined') {
         const script = document.createElement('script')
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
         script.onload = () => {
-          (window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
+          ;(window as any).pdfjsLib.GlobalWorkerOptions.workerSrc =
             'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
           loadPdfDocument(path)
         }
@@ -70,43 +88,89 @@ function PdfViewer(): React.ReactElement {
     }
   }
 
-  const renderPage = useCallback(async (pageNum: number) => {
-    if (!pdfDoc || !canvasRef.current) return
+  const renderAllPages = useCallback(async () => {
+    if (!pdfDoc) return
 
     try {
-      const page = await pdfDoc.getPage(pageNum)
-      const scale = zoom / 100
-      const viewport = page.getViewport({ scale: scale * 1.5 })
-      const canvas = canvasRef.current
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
+      for (let pageNum = 1; pageNum <= pdfDoc.numPages; pageNum += 1) {
+        const canvas = pageCanvasRefs.current.get(pageNum)
+        if (!canvas) continue
 
-      canvas.width = viewport.width
-      canvas.height = viewport.height
+        const page = await pdfDoc.getPage(pageNum)
+        const viewport = page.getViewport({ scale: (zoom / 100) * 1.5 })
+        const ctx = canvas.getContext('2d')
+        if (!ctx) continue
 
-      await page.render({ canvasContext: ctx, viewport }).promise
+        canvas.width = Math.ceil(viewport.width)
+        canvas.height = Math.ceil(viewport.height)
+        canvas.style.width = `${Math.ceil(viewport.width)}px`
+        canvas.style.height = `${Math.ceil(viewport.height)}px`
+
+        await page.render({ canvasContext: ctx, viewport }).promise
+      }
+
+      requestAnimationFrame(() => {
+        scrollToPage(pendingScrollPageRef.current, false)
+      })
     } catch (err) {
       console.error('Render error:', err)
     }
-  }, [pdfDoc, zoom])
+  }, [pdfDoc, zoom, scrollToPage])
 
   useEffect(() => {
-    if (pdfDoc && currentPage) {
-      renderPage(currentPage)
-    }
-  }, [pdfDoc, currentPage, renderPage])
+    if (!pdfDoc) return
+    renderAllPages()
+  }, [pdfDoc, zoom, renderAllPages])
 
   useEffect(() => {
-    // Save state on changes
-    if (fileHash) {
-      window.electronAPI?.pdf.saveState({
-        filePathHash: fileHash,
-        page: currentPage,
-        zoom,
-        sidebarOpen,
-      })
-    }
+    if (!fileHash) return
+
+    window.electronAPI?.pdf.saveState({
+      filePathHash: fileHash,
+      page: currentPage,
+      zoom,
+      sidebarOpen,
+    })
   }, [currentPage, zoom, sidebarOpen, fileHash])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container || totalPages < 1) return
+
+    let frame = 0
+    const updateCurrentPageFromScroll = () => {
+      const pageNodes = Array.from(container.querySelectorAll<HTMLElement>('[data-page]'))
+      if (pageNodes.length === 0) return
+
+      const containerTop = container.getBoundingClientRect().top
+      const threshold = containerTop + container.clientHeight * 0.35
+      let detectedPage = 1
+
+      for (const node of pageNodes) {
+        const nodeTop = node.getBoundingClientRect().top
+        if (nodeTop <= threshold) {
+          detectedPage = Number(node.dataset.page || '1')
+        } else {
+          break
+        }
+      }
+
+      setCurrentPage((prev) => (prev === detectedPage ? prev : detectedPage))
+    }
+
+    const onScroll = () => {
+      if (frame) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(updateCurrentPageFromScroll)
+    }
+
+    container.addEventListener('scroll', onScroll, { passive: true })
+    updateCurrentPageFromScroll()
+
+    return () => {
+      container.removeEventListener('scroll', onScroll)
+      if (frame) cancelAnimationFrame(frame)
+    }
+  }, [totalPages])
 
   const loadAnnotations = async (hash: string) => {
     const ann = await window.electronAPI?.pdf.getAnnotations({ filePathHash: hash })
@@ -142,27 +206,61 @@ function PdfViewer(): React.ReactElement {
     if (fileHash) loadAnnotations(fileHash)
   }
 
-  const prevPage = () => setCurrentPage((p) => Math.max(1, p - 1))
-  const nextPage = () => setCurrentPage((p) => Math.min(totalPages, p + 1))
+  const prevPage = () => goToPage(currentPage - 1)
+  const nextPage = () => goToPage(currentPage + 1)
   const zoomIn = () => setZoom((z) => Math.min(300, z + 15))
   const zoomOut = () => setZoom((z) => Math.max(50, z - 15))
 
-  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      const container = containerRef.current
       switch (e.key) {
-        case 'j': case 'ArrowDown': case ' ': nextPage(); break
-        case 'k': case 'ArrowUp': prevPage(); break
-        case 'b': setSidebarOpen((s) => !s); break
-        case 'n': setNightMode((n) => !n); break
-        case '+': case '=': if (e.ctrlKey) { e.preventDefault(); zoomIn() } break
-        case '-': if (e.ctrlKey) { e.preventDefault(); zoomOut() } break
+        case 'j':
+        case 'ArrowDown':
+        case ' ': {
+          e.preventDefault()
+          container?.scrollBy({ top: 160, behavior: 'smooth' })
+          break
+        }
+        case 'k':
+        case 'ArrowUp': {
+          e.preventDefault()
+          container?.scrollBy({ top: -160, behavior: 'smooth' })
+          break
+        }
+        case 'b':
+          setSidebarOpen((s) => !s)
+          break
+        case 'n':
+          setNightMode((n) => !n)
+          break
+        case '+':
+        case '=':
+          if (e.ctrlKey) {
+            e.preventDefault()
+            zoomIn()
+          }
+          break
+        case '-':
+          if (e.ctrlKey) {
+            e.preventDefault()
+            zoomOut()
+          }
+          break
+        case 'd':
+          if (e.ctrlKey) {
+            e.preventDefault()
+            addBookmark()
+          }
+          break
       }
     }
+
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [totalPages])
+  }, [addBookmark])
 
   useEffect(() => {
     window.electronAPI?.window.isFullscreen().then((value: boolean) => {
@@ -197,30 +295,22 @@ function PdfViewer(): React.ReactElement {
           background: 'rgba(245, 166, 35, 0.1)', border: '2px dashed rgba(245, 166, 35, 0.3)',
           display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 36,
         }}>
-          📄
+          PDF
         </div>
         <h2>PDF Reader</h2>
         <p style={{ color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', maxWidth: 400 }}>
-          A Sumatra-style PDF reader. Keyboard-first, zero clutter, fast.
-          <br />Your reading position and annotations are saved automatically.
+          Continuous scrolling PDF reader.
+          <br />Reading state and annotations are saved automatically.
         </p>
         <button className="btn btn-primary btn-lg" onClick={openFile}>
           <FolderOpen size={18} /> Open PDF File
         </button>
-        <div style={{
-          marginTop: 'var(--space-lg)', padding: 'var(--space-md)', background: 'var(--bg-secondary)',
-          borderRadius: 'var(--radius-md)', fontSize: 12, color: 'var(--text-muted)',
-          fontFamily: 'var(--font-mono)',
-        }}>
-          J/K: Scroll · B: Sidebar · N: Night · Ctrl+/−: Zoom · Ctrl+D: Bookmark
-        </div>
       </div>
     )
   }
 
   return (
     <div style={{ display: 'flex', height: '100%', marginTop: -16, marginLeft: -32, marginRight: -32 }}>
-      {/* Sidebar */}
       {sidebarOpen && (
         <div style={{
           width: 240, background: 'var(--bg-secondary)', borderRight: '1px solid var(--border-subtle)',
@@ -244,10 +334,10 @@ function PdfViewer(): React.ReactElement {
                   background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)',
                   marginBottom: 4, cursor: 'pointer',
                   borderLeft: `3px solid ${ann.type === 'bookmark' ? 'var(--accent-warning)' : 'var(--accent-recall)'}`,
-                }} onClick={() => setCurrentPage(ann.page_number)}>
+                }} onClick={() => goToPage(ann.page_number)}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
-                      {ann.type === 'bookmark' ? '🔖' : '📝'} Page {ann.page_number}
+                      {ann.type === 'bookmark' ? 'Bookmark' : 'Note'} - Page {ann.page_number}
                     </span>
                     <button onClick={(e) => { e.stopPropagation(); deleteAnnotation(ann.id) }}
                       style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 2 }}>
@@ -266,9 +356,7 @@ function PdfViewer(): React.ReactElement {
         </div>
       )}
 
-      {/* Main area */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-        {/* Toolbar */}
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
           padding: '6px var(--space-md)', background: 'var(--bg-secondary)',
@@ -307,7 +395,6 @@ function PdfViewer(): React.ReactElement {
           </div>
         </div>
 
-        {/* Note input */}
         {showNoteInput && (
           <div style={{
             display: 'flex', gap: 'var(--space-sm)', padding: 'var(--space-sm) var(--space-md)',
@@ -329,20 +416,34 @@ function PdfViewer(): React.ReactElement {
           </div>
         )}
 
-        {/* PDF Canvas */}
         <div ref={containerRef} style={{
-          flex: 1, overflow: 'auto', display: 'flex', justifyContent: 'center', alignItems: 'flex-start',
+          flex: 1,
+          overflow: 'auto',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 'var(--space-lg)',
           padding: 'var(--space-lg)',
           background: nightMode ? '#1a1a1a' : 'var(--bg-primary)',
         }}>
-          <canvas
-            ref={canvasRef}
-            style={{
-              maxWidth: 'none',
-              filter: nightMode ? 'invert(0.88) hue-rotate(180deg)' : 'none',
-              boxShadow: 'var(--shadow-lg)',
-            }}
-          />
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((pageNum) => (
+            <div key={pageNum} data-page={pageNum} style={{ width: 'fit-content' }}>
+              <canvas
+                ref={(el) => {
+                  if (!el) {
+                    pageCanvasRefs.current.delete(pageNum)
+                    return
+                  }
+                  pageCanvasRefs.current.set(pageNum, el)
+                }}
+                style={{
+                  maxWidth: 'none',
+                  filter: nightMode ? 'invert(0.88) hue-rotate(180deg)' : 'none',
+                  boxShadow: 'var(--shadow-lg)',
+                }}
+              />
+            </div>
+          ))}
         </div>
       </div>
     </div>

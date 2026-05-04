@@ -34,6 +34,7 @@ const api = {
     getTabs:        () => ipcRenderer.invoke('browser:getTabs'),
     requestBypass:  (data: { tabId: string; url: string }) => ipcRenderer.invoke('browser:requestBypass', data),
     setVisibility:  (data: { visible: boolean }) => ipcRenderer.invoke('browser:setVisibility', data),
+    updateBounds:   (data: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('browser:updateBounds', data),
   },
 
   // Whitelist / Blocklist

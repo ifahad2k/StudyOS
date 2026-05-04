@@ -47,6 +47,10 @@ export function registerBrowserIPC(): void {
     browserService.setVisible(data.visible)
   })
 
+  ipcMain.handle('browser:updateBounds', (_e, data: { x: number; y: number; width: number; height: number }) => {
+    browserService.setContentBounds(data)
+  })
+
   // Whitelist management
   ipcMain.handle('whitelist:get', () => {
     const db = getDb()

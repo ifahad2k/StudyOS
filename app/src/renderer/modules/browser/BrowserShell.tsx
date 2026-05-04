@@ -17,6 +17,7 @@ function BrowserShell(): React.ReactElement {
   const [blockedUrl, setBlockedUrl] = useState<string | null>(null)
   const [blockedTabId, setBlockedTabId] = useState<string | null>(null)
   const addressRef = useRef<HTMLInputElement>(null)
+  const browserViewportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     loadTabs()
@@ -104,6 +105,35 @@ function BrowserShell(): React.ReactElement {
     }
   }
 
+  useEffect(() => {
+    const target = browserViewportRef.current
+    if (!target) return
+
+    const syncBounds = () => {
+      const rect = target.getBoundingClientRect()
+      window.electronAPI?.browser.updateBounds({
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      })
+    }
+
+    const resizeObserver = new ResizeObserver(syncBounds)
+    resizeObserver.observe(target)
+
+    const rafId = requestAnimationFrame(syncBounds)
+    window.addEventListener('resize', syncBounds)
+    window.addEventListener('scroll', syncBounds, true)
+
+    return () => {
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', syncBounds)
+      window.removeEventListener('scroll', syncBounds, true)
+      resizeObserver.disconnect()
+    }
+  }, [])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', marginTop: -16, marginLeft: -32, marginRight: -32 }}>
       {/* Tab Bar */}
@@ -186,7 +216,9 @@ function BrowserShell(): React.ReactElement {
       </div>
 
       {/* Content Area (BrowserView will be overlaid here by Electron) */}
-      <div style={{
+      <div
+        ref={browserViewportRef}
+        style={{
         flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'var(--bg-primary)',
       }}>
