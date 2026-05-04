@@ -66,6 +66,16 @@ class BrowserService {
       }
     })
 
+    // Important: many search result clicks first navigate on a whitelisted domain
+    // (e.g. google.com/url...) and then redirect to a blocked target.
+    // We must enforce whitelist on redirects too.
+    view.webContents.on('will-redirect', (event, targetUrl, _isInPlace, isMainFrame) => {
+      if (isMainFrame && !this.isWhitelisted(targetUrl)) {
+        event.preventDefault()
+        this.handleBlockedUrl(tabId, targetUrl)
+      }
+    })
+
     view.webContents.on('did-start-navigation', (_event, navUrl, _isInPlace, isMainFrame) => {
       if (isMainFrame && navUrl !== 'about:blank') {
         const domain = this.extractDomain(navUrl)

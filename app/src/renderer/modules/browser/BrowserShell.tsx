@@ -149,12 +149,11 @@ function BrowserShell(): React.ReactElement {
   }
 
   useEffect(() => {
-    // BrowserView is always rendered above renderer layers, so hide it while modal overlays are open.
-    window.electronAPI?.browser.setVisibility({ visible: !showHistory })
-    return () => {
-      window.electronAPI?.browser.setVisibility({ visible: true })
-    }
-  }, [showHistory])
+    // BrowserView is always above renderer layers in Electron.
+    // Hide it whenever we show an overlay/modal so the UI remains clickable.
+    const shouldShowBrowserView = !showHistory && !blockedUrl
+    window.electronAPI?.browser.setVisibility({ visible: shouldShowBrowserView })
+  }, [showHistory, blockedUrl])
 
   useEffect(() => {
     if (!showHistory) return
@@ -329,7 +328,7 @@ function BrowserShell(): React.ReactElement {
             }}>
               🚫
             </div>
-            <h2 style={{ marginBottom: 'var(--space-sm)' }}>Site Blocked</h2>
+            <h2 style={{ marginBottom: 'var(--space-sm)' }}>Not Permitted Website</h2>
             <p style={{
               color: 'var(--text-secondary)', marginBottom: 'var(--space-sm)',
               fontFamily: 'var(--font-mono)', fontSize: 13,
@@ -340,7 +339,8 @@ function BrowserShell(): React.ReactElement {
             <p style={{
               color: 'var(--text-muted)', fontSize: 13, marginBottom: 'var(--space-xl)',
             }}>
-              This site is not in your whitelist. Bypassing will be logged and affects your focus score.
+              This website is not permitted right now. It is outside your whitelist.
+              <br />Bypassing will be logged and affects your focus score.
             </p>
             <div style={{ display: 'flex', gap: 'var(--space-md)', justifyContent: 'center' }}>
               <button className="btn btn-primary btn-lg" onClick={() => { setBlockedUrl(null); setBlockedTabId(null) }}>
