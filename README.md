@@ -80,4 +80,4 @@ For `1.1.0`, expected files are:
 
 ## License
 
-No license file is currently defined. Add one before public distribution.
+No license file is currently defined.
