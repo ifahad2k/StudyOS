@@ -1,0 +1,17 @@
+node_modules/
+dist/
+release/
+*.log
+
+app/node_modules/
+app/dist/
+app/release/
+app/*.tsbuildinfo
+app/electron.vite.config.*.mjs
+
+prototype/node_modules/
+prototype/dist/
+prototype/release/
+
+.DS_Store
+Thumbs.db
