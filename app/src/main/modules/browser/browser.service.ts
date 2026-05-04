@@ -13,6 +13,15 @@ export interface TabState {
   favicon?: string
 }
 
+export interface BrowserHistoryEntry {
+  id: number
+  tab_id: string | null
+  url: string
+  domain: string
+  title: string | null
+  visited_at: string
+}
+
 interface BrowserContentBounds {
   x: number
   y: number
@@ -67,6 +76,13 @@ class BrowserService {
           this.broadcastTabState()
         }
       }
+    })
+
+    view.webContents.on('did-navigate', () => {
+      const tab = this.tabStates.get(tabId)
+      if (!tab) return
+      const title = view.webContents.getTitle() || tab.title || tab.domain
+      this.recordHistory(tabId, tab.url, title)
     })
 
     // Handle new window requests (open in same browser)
@@ -256,6 +272,40 @@ class BrowserService {
     return Array.from(this.tabStates.values())
   }
 
+  getHistory(data?: { limit?: number; query?: string }): BrowserHistoryEntry[] {
+    try {
+      const db = getDb()
+      const limit = Math.min(Math.max(data?.limit ?? 200, 1), 2000)
+      const query = data?.query?.trim()
+      if (!query) {
+        return db.prepare(`
+          SELECT id, tab_id, url, domain, title, visited_at
+          FROM browser_history
+          ORDER BY visited_at DESC, id DESC
+          LIMIT ?
+        `).all(limit) as BrowserHistoryEntry[]
+      }
+
+      const likeQuery = `%${query}%`
+      return db.prepare(`
+        SELECT id, tab_id, url, domain, title, visited_at
+        FROM browser_history
+        WHERE url LIKE ? OR domain LIKE ? OR title LIKE ?
+        ORDER BY visited_at DESC, id DESC
+        LIMIT ?
+      `).all(likeQuery, likeQuery, likeQuery, limit) as BrowserHistoryEntry[]
+    } catch {
+      return []
+    }
+  }
+
+  clearHistory(): void {
+    try {
+      const db = getDb()
+      db.prepare('DELETE FROM browser_history').run()
+    } catch {}
+  }
+
   getActiveTabDomain(): string | null {
     if (!this.activeTabId) return null
     return this.tabStates.get(this.activeTabId)?.domain || null
@@ -375,6 +425,33 @@ class BrowserService {
     } catch {
       return url
     }
+  }
+
+  private recordHistory(tabId: string, url: string, title: string): void {
+    if (!url || url === 'about:blank') return
+    try {
+      const domain = this.extractDomain(url)
+      const db = getDb()
+      const now = new Date().toISOString()
+
+      const latest = db.prepare(`
+        SELECT url, visited_at FROM browser_history
+        WHERE tab_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+      `).get(tabId) as { url: string; visited_at: string } | undefined
+
+      // Prevent duplicate entries when the same page triggers rapid repeat events.
+      if (latest?.url === url) {
+        const delta = Math.abs(new Date(now).getTime() - new Date(latest.visited_at).getTime())
+        if (delta < 3000) return
+      }
+
+      db.prepare(`
+        INSERT INTO browser_history (tab_id, url, domain, title, visited_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(tabId, url, domain, title || domain, now)
+    } catch {}
   }
 
   private startActiveTracker(tabId: string) {

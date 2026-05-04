@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Plus, X, ArrowLeft, ArrowRight, RotateCw, Search, Shield } from 'lucide-react'
+import { Plus, X, ArrowLeft, ArrowRight, RotateCw, Search, Shield, History, Trash2, Clock3 } from 'lucide-react'
 
 interface TabState {
   id: string
@@ -10,12 +10,25 @@ interface TabState {
   isPinned: boolean
 }
 
+interface BrowserHistoryEntry {
+  id: number
+  tab_id: string | null
+  url: string
+  domain: string
+  title: string | null
+  visited_at: string
+}
+
 function BrowserShell(): React.ReactElement {
   const [tabs, setTabs] = useState<TabState[]>([])
   const [activeTabId, setActiveTabId] = useState<string | null>(null)
   const [addressValue, setAddressValue] = useState('')
   const [blockedUrl, setBlockedUrl] = useState<string | null>(null)
   const [blockedTabId, setBlockedTabId] = useState<string | null>(null)
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyItems, setHistoryItems] = useState<BrowserHistoryEntry[]>([])
+  const [historyQuery, setHistoryQuery] = useState('')
+  const [historyLoading, setHistoryLoading] = useState(false)
   const addressRef = useRef<HTMLInputElement>(null)
   const browserViewportRef = useRef<HTMLDivElement>(null)
 
@@ -105,6 +118,44 @@ function BrowserShell(): React.ReactElement {
     }
   }
 
+  const loadHistory = async (query = '') => {
+    setHistoryLoading(true)
+    const items = await window.electronAPI?.browser.getHistory({
+      limit: 300,
+      query: query.trim() || undefined,
+    })
+    setHistoryItems(items || [])
+    setHistoryLoading(false)
+  }
+
+  const openHistory = async () => {
+    setShowHistory(true)
+    await loadHistory(historyQuery)
+  }
+
+  const clearHistory = async () => {
+    await window.electronAPI?.browser.clearHistory()
+    await loadHistory(historyQuery)
+  }
+
+  const openHistoryEntry = async (item: BrowserHistoryEntry) => {
+    setShowHistory(false)
+    if (activeTabId) {
+      await window.electronAPI?.browser.navigate({ tabId: activeTabId, url: item.url })
+      setAddressValue(item.url)
+      return
+    }
+    await newTab(item.url)
+  }
+
+  useEffect(() => {
+    if (!showHistory) return
+    const handler = setTimeout(() => {
+      loadHistory(historyQuery)
+    }, 180)
+    return () => clearTimeout(handler)
+  }, [historyQuery, showHistory])
+
   useEffect(() => {
     const target = browserViewportRef.current
     if (!target) return
@@ -193,6 +244,7 @@ function BrowserShell(): React.ReactElement {
         <button className="btn btn-ghost btn-sm" onClick={goBack} title="Back"><ArrowLeft size={16} /></button>
         <button className="btn btn-ghost btn-sm" onClick={goForward} title="Forward"><ArrowRight size={16} /></button>
         <button className="btn btn-ghost btn-sm" onClick={reload} title="Reload"><RotateCw size={14} /></button>
+        <button className="btn btn-ghost btn-sm" onClick={openHistory} title="History"><History size={15} /></button>
 
         <div style={{
           flex: 1, display: 'flex', alignItems: 'center', gap: 8,
@@ -289,6 +341,84 @@ function BrowserShell(): React.ReactElement {
               <button className="btn btn-danger" onClick={handleBypass}>
                 Open Anyway
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showHistory && (
+        <div style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.72)',
+          backdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          zIndex: 220,
+        }}>
+          <div style={{
+            width: 'min(920px, 92vw)', height: 'min(680px, 84vh)',
+            background: 'var(--bg-secondary)', border: '1px solid var(--border-subtle)',
+            borderRadius: 'var(--radius-xl)', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '12px var(--space-md)', borderBottom: '1px solid var(--border-subtle)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-heading)', fontWeight: 600 }}>
+                <History size={16} />
+                Browser History
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-sm)' }}>
+                <button className="btn btn-danger btn-sm" onClick={clearHistory}><Trash2 size={13} /> Clear</button>
+                <button className="btn btn-ghost btn-sm" onClick={() => setShowHistory(false)}><X size={14} /></button>
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8,
+              padding: 'var(--space-md)', borderBottom: '1px solid var(--border-subtle)',
+            }}>
+              <Search size={14} color="var(--text-muted)" />
+              <input
+                type="text"
+                value={historyQuery}
+                onChange={(e) => setHistoryQuery(e.target.value)}
+                placeholder="Search history by title, URL or domain..."
+                style={{
+                  flex: 1, background: 'transparent', border: 'none', outline: 'none',
+                  color: 'var(--text-primary)', fontFamily: 'var(--font-body)', fontSize: 13,
+                }}
+              />
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              {historyLoading ? (
+                <div style={{ padding: 'var(--space-lg)', color: 'var(--text-muted)', fontSize: 13 }}>Loading history...</div>
+              ) : historyItems.length === 0 ? (
+                <div style={{ padding: 'var(--space-lg)', color: 'var(--text-muted)', fontSize: 13 }}>No history yet.</div>
+              ) : (
+                historyItems.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => openHistoryEntry(item)}
+                    style={{
+                      width: '100%', textAlign: 'left', border: 'none', background: 'transparent', cursor: 'pointer',
+                      padding: '10px var(--space-md)', borderBottom: '1px solid rgba(255,255,255,0.03)',
+                      display: 'flex', alignItems: 'center', gap: 'var(--space-sm)', color: 'var(--text-primary)',
+                    }}
+                  >
+                    <Clock3 size={13} color="var(--text-muted)" />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.title || item.domain}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {item.url}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                      {new Date(item.visited_at).toLocaleString()}
+                    </div>
+                  </button>
+                ))
+              )}
             </div>
           </div>
         </div>

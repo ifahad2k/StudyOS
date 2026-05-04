@@ -39,6 +39,14 @@ export function registerBrowserIPC(): void {
     return browserService.getTabs()
   })
 
+  ipcMain.handle('browser:getHistory', (_e, data?: { limit?: number; query?: string }) => {
+    return browserService.getHistory(data)
+  })
+
+  ipcMain.handle('browser:clearHistory', () => {
+    browserService.clearHistory()
+  })
+
   ipcMain.handle('browser:requestBypass', (_e, data: { tabId: string; url: string }) => {
     browserService.requestBypass(data.tabId, data.url)
   })

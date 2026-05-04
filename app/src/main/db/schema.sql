@@ -158,6 +158,24 @@ CREATE INDEX IF NOT EXISTS idx_tab_session ON tab_sessions(session_id);
 CREATE INDEX IF NOT EXISTS idx_tab_domain  ON tab_sessions(domain);
 
 -- ═══════════════════════════════════════════════
+-- BROWSER HISTORY
+-- ═══════════════════════════════════════════════
+
+CREATE TABLE IF NOT EXISTS browser_history (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  tab_id        TEXT,
+  url           TEXT NOT NULL,
+  domain        TEXT NOT NULL,
+  title         TEXT,
+  visited_at    DATETIME NOT NULL,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  metadata      TEXT DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_browser_history_visited_at ON browser_history(visited_at);
+CREATE INDEX IF NOT EXISTS idx_browser_history_domain     ON browser_history(domain);
+
+-- ═══════════════════════════════════════════════
 -- PDF
 -- ═══════════════════════════════════════════════
 
