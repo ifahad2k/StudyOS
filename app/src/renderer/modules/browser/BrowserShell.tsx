@@ -149,6 +149,14 @@ function BrowserShell(): React.ReactElement {
   }
 
   useEffect(() => {
+    // BrowserView is always rendered above renderer layers, so hide it while modal overlays are open.
+    window.electronAPI?.browser.setVisibility({ visible: !showHistory })
+    return () => {
+      window.electronAPI?.browser.setVisibility({ visible: true })
+    }
+  }, [showHistory])
+
+  useEffect(() => {
     if (!showHistory) return
     const handler = setTimeout(() => {
       loadHistory(historyQuery)
